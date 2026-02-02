@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>WebSocket test</title>
+    <style>
+      body {
+        font-family: monospace;
+        padding: 20px;
+      }
+      #log {
+        white-space: pre;
+        border: 1px solid #ccc;
+        padding: 10px;
+        height: 300px;
+        overflow-y: auto;
+      }
+      input {
+        width: 300px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>WebSocket test</h3>
+
+    <input id="msg" placeholder="Введите сообщение" />
+    <button id="send">Отправить</button>
+
+    <div id="log"></div>
+
+    <script>
+      // fetch("http://127.0.0.1:8081/")
+      //   .then(() => console.log("fetch OK"))
+      //   .catch((e) => console.error("fetch FAIL", e));
+
+      const WS_URL = "ws://localhost:8081/connect";
+      const logEl = document.getElementById("log");
+      const input = document.getElementById("messageInput");
+
+      const log = (s) => {
+        logEl.textContent += s + "\n";
+      };
+
+      log("Page origin: " + location.origin);
+
+      const ws = new WebSocket(WS_URL);
+
+      ws.addEventListener("open", () => log("✅ open"));
+      ws.addEventListener("message", (e) => log("📩 " + e.data));
+      ws.addEventListener("error", () => log("❌ error (details hidden)"));
+      ws.addEventListener("close", (e) =>
+        log(`🔌 close code=${e.code} reason="${e.reason}" clean=${e.wasClean}`),
+      );
+
+      function sendMessage() {
+        if (ws.readyState !== WebSocket.OPEN) {
+          log("⚠️ not connected, readyState=" + ws.readyState);
+          return;
+        }
+        ws.send(input.value);
+        log("➡️ " + input.value);
+        input.value = "";
+      }
+      window.sendMessage = sendMessage;
+    </script>
+  </body>
+</html>
