@@ -23,15 +23,14 @@ var (
 	hubConns = make(map[*gws.Conn]struct{}) // множество соединений; struct{} не занимает памяти
 )
 
-// broadcastPollResult отправляет результат опроса (statusCode + кусок body) всем клиентам
-// через WebSocket текстовый фрейм (OpcodeText). Вызывается из горутины поллера.
-func broadcastPollResult(statusCode int, body string) {
-	// Ограничиваем длину body, чтобы не слать клиентам мегабайты HTML.
+// broadcastPollResult отправляет результат опроса (url, statusCode, body) всем клиентам
+// через WebSocket текстовый фрейм (OpcodeText). url — какой сайт опрашивали, чтобы клиент различал.
+func broadcastPollResult(url string, statusCode int, body string) {
 	const maxBodyPreview = 200
 	if len(body) > maxBodyPreview {
 		body = body[:maxBodyPreview] + "..."
 	}
-	msg := []byte(fmt.Sprintf(`{"status_code":%d,"body":%q}`, statusCode, body))
+	msg := []byte(fmt.Sprintf(`{"url":%q,"status_code":%d,"body":%q}`, url, statusCode, body))
 
 	hubMu.Lock()
 	defer hubMu.Unlock()
@@ -41,6 +40,14 @@ func broadcastPollResult(statusCode int, body string) {
 }
 
 func main() {
+	// Загружаем переменные окружения из .env файла при старте программы.
+	if err := loadEnv(".env"); err != nil {
+		fmt.Println("Warning: не удалось загрузить .env:", err)
+		// Продолжаем работу — возможно, переменные заданы в системе
+	}
+
+	SendTelegramMessage("test")
+
 	upgrader := gws.NewUpgrader(&Handler{}, &gws.ServerOption{
 
 		ParallelEnabled:   true,                                  // Parallel message processing
@@ -62,21 +69,38 @@ func main() {
 		go socket.ReadLoop()
 	})
 
+	// context.Context — это интерфейс в Go для передачи сигналов отмены, дедлайнов и значений
+	// между горутинами и функциями. Это стандартный способ управления жизненным циклом операций.
+	//
+	// context.Background() — создаёт "пустой" контекст, который никогда не отменяется.
+	// Используется как корневой контекст для долгоживущих операций (например, поллер работает
+	// пока работает программа). Если бы нужна была возможность остановить поллер по требованию,
+	// использовали бы context.WithCancel() и вызывали cancel() для остановки.
 	ctx := context.Background()
-	ch := StartPoller(ctx, "https://dzen.ru", 10*time.Second)
+	pollInterval := 10 * time.Second
 
-	// Горутина: читаем результаты поллера из канала и рассылаем их всем WS-клиентам.
-	go func() {
-		for r := range ch {
-			if r.Err != nil {
-				fmt.Println("poll error:", r.Err)
-				broadcastPollResult(0, "poll error: "+r.Err.Error()) // 0 = нет кода ответа
-				continue
+	// Список сайтов для опроса — каждый опрашивается своим поллером независимо.
+	pollTargets := []string{
+		"https://dzen.ru",
+		"https://ya.ru",
+	}
+
+	// Для каждого URL запускаем отдельный поллер и горутину, которая рассылает результаты клиентам.
+	for _, url := range pollTargets {
+		url := url // для замыкания в горутине
+		ch := StartPoller(ctx, url, pollInterval)
+		go func() {
+			for r := range ch {
+				if r.Err != nil {
+					fmt.Println("poll error [", url, "]:", r.Err)
+					broadcastPollResult(url, 0, "poll error: "+r.Err.Error())
+					continue
+				}
+				fmt.Println(url, "status:", r.StatusCode)
+				broadcastPollResult(url, r.StatusCode, string(r.Body))
 			}
-			fmt.Println("status:", r.StatusCode)
-			broadcastPollResult(r.StatusCode, string(r.Body))
-		}
-	}()
+		}()
+	}
 
 	http.ListenAndServe(":8081", nil)
 }

@@ -27,6 +27,9 @@ func StartPoller(ctx context.Context, url string, every time.Duration) <-chan Po
 
 		for {
 			select {
+			// ctx.Done() возвращает канал, который закрывается когда контекст отменён.
+			// Когда контекст отменён (например, вызвали cancel() или истёк deadline),
+			// этот case срабатывает и горутина корректно завершается, закрывая канал out.
 			case <-ctx.Done():
 				return
 
